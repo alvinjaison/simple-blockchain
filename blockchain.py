@@ -4,11 +4,26 @@ import json
 import socket
 import threading
 
+class Transaction:
+    def __init__(self, sender, recipient, amount):
+        self.sender = sender
+        self.recipient = recipient
+        self.amount = amount
+        self.timestamp = datetime.datetime.now()
+
+    def serialize(self):
+        return {
+            "sender": self.sender,
+            "recipient": self.recipient,
+            "amount": self.amount,
+            "timestamp": self.timestamp.strftime('%Y-%m-%d %H:%M:%S')
+        }
+
 class Block:
-    def __init__(self, index, timestamp, data, previous_hash):
+    def __init__(self, index, timestamp, transactions, previous_hash):
         self.index = index
         self.timestamp = timestamp
-        self.data = data
+        self.transactions = transactions
         self.previous_hash = previous_hash
         self.nonce = 0  # Nonce for PoW
         self.hash = self.calculate_hash()
@@ -17,7 +32,7 @@ class Block:
         sha = hashlib.sha256()
         sha.update(str(self.index).encode('utf-8') +
                    str(self.timestamp).encode('utf-8') +
-                   str(self.data).encode('utf-8') +
+                   json.dumps([tx.serialize() for tx in self.transactions]).encode('utf-8') +
                    str(self.previous_hash).encode('utf-8') +
                    str(self.nonce).encode('utf-8'))  # Include nonce in hash calculation
         return sha.hexdigest()
@@ -28,31 +43,26 @@ class Block:
             self.hash = self.calculate_hash()
         print("Block mined: ", self.hash)
 
-    def serialize(self):
-        return {
-            "index": self.index,
-            "timestamp": str(self.timestamp),
-            "data": self.data,
-            "previous_hash": self.previous_hash,
-            "hash": self.hash
-        }
-
-
 class Blockchain:
     def __init__(self):
         self.chain = [self.create_genesis_block()]
         self.difficulty = 2  # Difficulty for PoW
+        self.pending_transactions = []
 
     def create_genesis_block(self):
-        return Block(0, datetime.datetime.now(), "Genesis Block", "0")
+        return Block(0, datetime.datetime.now(), [], "0")
 
     def get_latest_block(self):
         return self.chain[-1]
 
-    def add_block(self, new_block):
-        new_block.previous_hash = self.get_latest_block().hash
-        new_block.mine_block(self.difficulty)
-        self.chain.append(new_block)
+    def add_transaction(self, transaction):
+        self.pending_transactions.append(transaction)
+
+    def mine_pending_transactions(self, miner_reward_address):
+        block = Block(len(self.chain), datetime.datetime.now(), self.pending_transactions, self.get_latest_block().hash)
+        block.mine_block(self.difficulty)
+        self.chain.append(block)
+        self.pending_transactions = [Transaction(None, miner_reward_address, 1)]  # Reward for mining
 
     def is_chain_valid(self):
         for i in range(1, len(self.chain)):
@@ -66,7 +76,6 @@ class Blockchain:
                 return False
 
         return True
-
 
 class P2PServer:
     def __init__(self, blockchain, port):
@@ -83,7 +92,7 @@ class P2PServer:
             if not data:
                 break
             if data == 'GET_CHAIN':
-                chain_data = json.dumps([block.serialize() for block in self.blockchain.chain])
+                chain_data = json.dumps([block.__dict__ for block in self.blockchain.chain], default=str)
                 client_socket.sendall(chain_data.encode('utf-8'))
         client_socket.close()
 
@@ -92,7 +101,6 @@ class P2PServer:
             client_socket, _ = self.server_socket.accept()
             thread = threading.Thread(target=self.handle_peer, args=(client_socket,))
             thread.start()
-
 
 class P2PClient:
     def __init__(self, peer_ip, peer_port):
@@ -116,7 +124,6 @@ class P2PClient:
             print("Error:", e)
             return None
 
-
 # Example usage:
 
 # Create a blockchain
@@ -131,12 +138,14 @@ thread.start()
 p2p_client = P2PClient('127.0.0.1', 5000)
 peer_chain = p2p_client.get_chain_from_peer()
 if peer_chain:
-    my_blockchain.chain = [Block(block['index'], datetime.datetime.strptime(block['timestamp'], "%Y-%m-%d %H:%M:%S.%f"), block['data'], block['previous_hash']) for block in peer_chain]
+    my_blockchain.chain = [Block(block['index'], datetime.datetime.strptime(block['timestamp'], "%Y-%m-%d %H:%M:%S"), block['transactions'], block['previous_hash']) for block in peer_chain]
 
-# Add some blocks
-my_blockchain.add_block(Block(1, datetime.datetime.now(), "Block 1", ""))
-my_blockchain.add_block(Block(2, datetime.datetime.now(), "Block 2", ""))
-my_blockchain.add_block(Block(3, datetime.datetime.now(), "Block 3", ""))
+# Add some transactions
+my_blockchain.add_transaction(Transaction("Alice", "Bob", 5))
+my_blockchain.add_transaction(Transaction("Bob", "Charlie", 3))
+
+# Mine pending transactions
+my_blockchain.mine_pending_transactions("Miner")
 
 # Check if the blockchain is valid
 print("Is blockchain valid?", my_blockchain.is_chain_valid())
@@ -145,7 +154,7 @@ print("Is blockchain valid?", my_blockchain.is_chain_valid())
 for block in my_blockchain.chain:
     print("Block Index:", block.index)
     print("Timestamp:", block.timestamp)
-    print("Data:", block.data)
+    print("Transactions:", block.transactions)
     print("Previous Hash:", block.previous_hash)
     print("Hash:", block.hash)
     print()
