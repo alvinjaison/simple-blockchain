@@ -7,6 +7,7 @@ class Block:
         self.timestamp = timestamp
         self.data = data
         self.previous_hash = previous_hash
+        self.nonce = 0  # Nonce for PoW
         self.hash = self.calculate_hash()
 
     def calculate_hash(self):
@@ -14,13 +15,21 @@ class Block:
         sha.update(str(self.index).encode('utf-8') +
                    str(self.timestamp).encode('utf-8') +
                    str(self.data).encode('utf-8') +
-                   str(self.previous_hash).encode('utf-8'))
+                   str(self.previous_hash).encode('utf-8') +
+                   str(self.nonce).encode('utf-8'))  # Include nonce in hash calculation
         return sha.hexdigest()
+
+    def mine_block(self, difficulty):
+        while self.hash[0:difficulty] != '0' * difficulty:  # Adjust difficulty by changing number of leading zeroes
+            self.nonce += 1
+            self.hash = self.calculate_hash()
+        print("Block mined: ", self.hash)
 
 
 class Blockchain:
     def __init__(self):
         self.chain = [self.create_genesis_block()]
+        self.difficulty = 2  # Difficulty for PoW
 
     def create_genesis_block(self):
         return Block(0, datetime.datetime.now(), "Genesis Block", "0")
@@ -30,7 +39,7 @@ class Blockchain:
 
     def add_block(self, new_block):
         new_block.previous_hash = self.get_latest_block().hash
-        new_block.hash = new_block.calculate_hash()
+        new_block.mine_block(self.difficulty)
         self.chain.append(new_block)
 
     def is_chain_valid(self):
