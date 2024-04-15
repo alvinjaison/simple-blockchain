@@ -1,5 +1,8 @@
 import hashlib
 import datetime
+import json
+import socket
+import threading
 
 class Block:
     def __init__(self, index, timestamp, data, previous_hash):
@@ -24,6 +27,15 @@ class Block:
             self.nonce += 1
             self.hash = self.calculate_hash()
         print("Block mined: ", self.hash)
+
+    def serialize(self):
+        return {
+            "index": self.index,
+            "timestamp": str(self.timestamp),
+            "data": self.data,
+            "previous_hash": self.previous_hash,
+            "hash": self.hash
+        }
 
 
 class Blockchain:
@@ -56,10 +68,70 @@ class Blockchain:
         return True
 
 
+class P2PServer:
+    def __init__(self, blockchain, port):
+        self.blockchain = blockchain
+        self.port = port
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.bind(('0.0.0.0', self.port))
+        self.server_socket.listen(5)
+        print(f"Listening for peers on port {self.port}")
+
+    def handle_peer(self, client_socket):
+        while True:
+            data = client_socket.recv(1024).decode('utf-8')
+            if not data:
+                break
+            if data == 'GET_CHAIN':
+                chain_data = json.dumps([block.serialize() for block in self.blockchain.chain])
+                client_socket.sendall(chain_data.encode('utf-8'))
+        client_socket.close()
+
+    def run(self):
+        while True:
+            client_socket, _ = self.server_socket.accept()
+            thread = threading.Thread(target=self.handle_peer, args=(client_socket,))
+            thread.start()
+
+
+class P2PClient:
+    def __init__(self, peer_ip, peer_port):
+        self.peer_ip = peer_ip
+        self.peer_port = peer_port
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    def get_chain_from_peer(self):
+        try:
+            self.client_socket.connect((self.peer_ip, self.peer_port))
+            self.client_socket.sendall('GET_CHAIN'.encode('utf-8'))
+            chain_data = b''
+            while True:
+                data = self.client_socket.recv(1024)
+                if not data:
+                    break
+                chain_data += data
+            self.client_socket.close()
+            return json.loads(chain_data.decode('utf-8'))
+        except Exception as e:
+            print("Error:", e)
+            return None
+
+
 # Example usage:
 
 # Create a blockchain
 my_blockchain = Blockchain()
+
+# Start P2P server
+p2p_server = P2PServer(my_blockchain, 5000)
+thread = threading.Thread(target=p2p_server.run)
+thread.start()
+
+# Connect to peer and synchronize blockchain
+p2p_client = P2PClient('127.0.0.1', 5000)
+peer_chain = p2p_client.get_chain_from_peer()
+if peer_chain:
+    my_blockchain.chain = [Block(block['index'], datetime.datetime.strptime(block['timestamp'], "%Y-%m-%d %H:%M:%S.%f"), block['data'], block['previous_hash']) for block in peer_chain]
 
 # Add some blocks
 my_blockchain.add_block(Block(1, datetime.datetime.now(), "Block 1", ""))
@@ -77,3 +149,4 @@ for block in my_blockchain.chain:
     print("Previous Hash:", block.previous_hash)
     print("Hash:", block.hash)
     print()
+
